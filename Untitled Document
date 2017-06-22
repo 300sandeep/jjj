@@ -1,0 +1,128 @@
+inside stie-enabled/default
+
+upstream my_compliance {
+  # Path to Puma SOCK file, as defined previously
+  server unix:///home/ubuntu/production/my_compliance/shared/tmp/sockets/my_compliance.sock fail_timeout=0;
+}
+
+server {
+  listen 80;
+  listen [::]:80  ipv6only=on;
+  server_name mycompliance.me www.mycompliance.me;
+  return    301 https://$server_name$request_uri;
+}
+
+server {
+  listen 443 ssl;
+  server_name mycompliance.me www.mycompliance.me;
+  ssl_certificate /etc/ssl/ssl/www.mycompliance.me.pem;
+  ssl_certificate_key /etc/ssl/ssl/mycompliance.key;
+
+  root /home/ubuntu/production/my_compliance/public;
+
+  try_files $uri/index.html $uri @my_compliance;
+
+  location @my_compliance {
+         proxy_pass http://my_compliance;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+         proxy_set_header Host $http_host;
+         proxy_read_timeout 6000;
+         proxy_redirect off;
+ error_page 500 502 503 504 /500.html;
+  client_max_body_size 4G;
+  keepalive_timeout 10;
+}
+
+
+
+
+
+puma.rb
+
+
+
+# Change to match your CPU core count
+workers 1
+
+# Min and Max threads per worker
+threads 1, 6
+
+app_dir = File.expand_path("../../../..", __FILE__)
+shared_dir = "#{app_dir}/shared"
+APP_NAME = "my_compliance"
+
+# Default to production
+rails_env = ENV['RAILS_ENV'] || "production"
+environment rails_env
+
+worker_timeout 200
+
+# Set up socket location
+bind "unix://#{shared_dir}/tmp/sockets/#{APP_NAME}.sock"
+
+# Logging
+stdout_redirect "#{shared_dir}/log/puma.access.log", "#{shared_dir}/log/puma.error.log", true
+
+# Set master PID and state locations
+pidfile "#{shared_dir}/tmp/pids/#{APP_NAME}.pid"
+state_path "#{shared_dir}/tmp/pids/#{APP_NAME}.state"
+activate_control_app
+daemonize true
+
+on_worker_boot do
+  require "active_record"
+  ActiveRecord::Base.connection.disconnect! rescue ActiveRecord::ConnectionNotEstablished
+  ActiveRecord::Base.establish_connection(YAML.load_file("#{shared_dir}/config/database.yml")[rails_env])
+end
+
+
+
+gems
+
+ gem 'capistrano', '~> 3.1'
+  gem 'capistrano-rails', '~> 1.1'
+  gem 'capistrano-bundler', '~> 1.1.2'
+  gem 'capistrano-rvm', '~> 0.1.2'
+  gem 'capistrano3-puma', '~> 1.2.1'
+  gem 'capistrano3-delayed-job', '~> 1.0'
+
+
+
+cap file
+
+# Load DSL and set up stages
+require 'capistrano/setup'
+
+# Include default deployment tasks
+require 'capistrano/deploy'
+require 'capistrano/rails'
+require 'capistrano/bundler'
+require 'capistrano/rvm'
+require 'capistrano/puma'
+require 'whenever/capistrano'
+require 'capistrano/delayed_job'
+# Include tasks from other gems included in your Gemfile
+#
+# For documentation on these, see for example:
+#
+#   https://github.com/capistrano/rvm
+#   https://github.com/capistrano/rbenv
+#   https://github.com/capistrano/chruby
+#   https://github.com/capistrano/bundler
+#   https://github.com/capistrano/rails
+#   https://github.com/capistrano/passenger
+#
+# require 'capistrano/rvm'
+# require 'capistrano/rbenv'
+# require 'capistrano/chruby'
+# require 'capistrano/bundler'
+# require 'capistrano/rails/assets'
+# require 'capistrano/rails/migrations'
+# require 'capistrano/passenger'
+
+# Load custom tasks from `lib/capistrano/tasks` if you have any defined
+Dir.glob('lib/capistrano/tasks/*.rake').each { |r| import r }
+Rake::Task[:production].invoke
+
+
+
